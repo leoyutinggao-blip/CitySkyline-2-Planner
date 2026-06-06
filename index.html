@@ -61,7 +61,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>CS2 城市规划器 v0.7 iPad + Pencil</h1>
+    <h1>CS2 城市规划器 v0.8 iPad + Pencil</h1>
     <div class="top-actions">
       <label class="file-label" for="bgFile">导入图片</label><input id="bgFile" type="file" accept="image/png,image/jpeg,image/webp" />
       <label class="file-label" for="pdfFile">导入 PDF</label><input id="pdfFile" type="file" accept=".pdf,application/pdf,*/*" />
@@ -167,11 +167,11 @@ function segDist(p,a,b){const l2=(b.x-a.x)**2+(b.y-a.y)**2;if(!l2)return dist(p,
 function pointInPoly(p,poly){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){if(((poly[i].y>p.y)!=(poly[j].y>p.y))&&(p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y)+poly[i].x))c=!c}return c}
 const pointers=new Map();let lastTap=0, longTimer=null, panStart=null, pinchStart=null;
 canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,type:e.pointerType});clearTimeout(longTimer);if(pointers.size===1){panStart={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y};longTimer=setTimeout(()=>{if(state.tool!=='pan'){eraseAt(screenToWorld(e.clientX-wrap.getBoundingClientRect().left,e.clientY-wrap.getBoundingClientRect().top))}},650)}else if(pointers.size===2){pinchStart=pinchInfo();}}, {passive:false});
-canvas.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;clearTimeout(longTimer);if(pointers.size===2&&pinchStart){const now=pinchInfo();const ratio=now.d/pinchStart.d;zoomAt(now.cx-wrap.getBoundingClientRect().left,now.cy-wrap.getBoundingClientRect().top,pinchStart.scale*ratio,false);state.view.x=pinchStart.vx+(now.cx-pinchStart.cx);state.view.y=pinchStart.vy+(now.cy-pinchStart.cy);draw();return}if(pointers.size===1&&state.tool==='pan'&&panStart){state.view.x=panStart.vx+(e.clientX-panStart.x);state.view.y=panStart.vy+(e.clientY-panStart.y);draw();}}, {passive:false});
+canvas.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;clearTimeout(longTimer);if(pointers.size===2&&pinchStart){const now=pinchInfo();const rect=wrap.getBoundingClientRect();const cx=now.cx-rect.left,cy=now.cy-rect.top;const ratio=now.d/pinchStart.d;const newScale=Math.max(.05,Math.min(12,pinchStart.scale*ratio));state.view.scale=newScale;state.view.x=cx-pinchStart.world.x*newScale;state.view.y=cy-pinchStart.world.y*newScale;draw();return}if(pointers.size===1&&state.tool==='pan'&&panStart){state.view.x=panStart.vx+(e.clientX-panStart.x);state.view.y=panStart.vy+(e.clientY-panStart.y);draw();}}, {passive:false});
 canvas.addEventListener('pointerup',e=>{clearTimeout(longTimer);const p=pointers.get(e.pointerId);pointers.delete(e.pointerId);if(!p)return;const moved=Math.hypot(e.clientX-p.px,e.clientY-p.py);const rect=wrap.getBoundingClientRect();if(moved<10&&pointers.size===0){const now=Date.now();if(now-lastTap<320&&(lineTools.has(state.tool)||zoneTools.has(state.tool))){finishDraft()}else if(state.tool!=='pan'){addWorldPoint(screenToWorld(e.clientX-rect.left,e.clientY-rect.top))}lastTap=now}if(pointers.size<2)pinchStart=null;}, {passive:false});
 canvas.addEventListener('pointercancel',e=>{pointers.delete(e.pointerId);clearTimeout(longTimer)});
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.offsetX,e.offsetY,state.view.scale*(e.deltaY>0?.9:1.1),true)},{passive:false});
-function pinchInfo(){const arr=[...pointers.values()];const a=arr[0],b=arr[1];return{d:Math.hypot(a.x-b.x,a.y-b.y),cx:(a.x+b.x)/2,cy:(a.y+b.y)/2,scale:state.view.scale,vx:state.view.x,vy:state.view.y}}
+function pinchInfo(){const arr=[...pointers.values()];const a=arr[0],b=arr[1];const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;const rect=wrap.getBoundingClientRect();const sx=cx-rect.left,sy=cy-rect.top;return{d:Math.hypot(a.x-b.x,a.y-b.y),cx,cy,sx,sy,scale:state.view.scale,vx:state.view.x,vy:state.view.y,world:screenToWorld(sx,sy)}}
 function zoomAt(sx,sy,newScale,redraw=true){newScale=Math.max(.05,Math.min(12,newScale));const w=screenToWorld(sx,sy);state.view.scale=newScale;state.view.x=sx-w.x*newScale;state.view.y=sy-w.y*newScale;if(redraw)draw()}
 async function loadImageFile(file){const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{state.bg=img;state.bgInfo={type:'image',name:file.name};fitToBg();saveLocal();toast('图片已导入')};img.src=url}
 el('bgFile').onchange=e=>{const f=e.target.files[0];if(f)loadImageFile(f)};
