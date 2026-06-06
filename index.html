@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0b1220" />
-  <title>CS2 城市规划器 v0.7 iPad + PDF Canvas Fix</title>
+  <title>CS2 城市规划器 v0.9 Pencil Straight Draw</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     :root{
@@ -61,7 +61,7 @@
 <body>
 <div id="app">
   <header>
-    <h1>CS2 城市规划器 v0.8 iPad + Pencil</h1>
+    <h1>CS2 城市规划器 v0.9 iPad + Pencil</h1>
     <div class="top-actions">
       <label class="file-label" for="bgFile">导入图片</label><input id="bgFile" type="file" accept="image/png,image/jpeg,image/webp" />
       <label class="file-label" for="pdfFile">导入 PDF</label><input id="pdfFile" type="file" accept=".pdf,application/pdf,*/*" />
@@ -101,7 +101,7 @@
   <div class="bottom-bar">
     <div class="mode-chip"><strong id="modeName">移动地图</strong><span id="modeHint">双指缩放 / 单指移动</span></div>
     <div class="bottom-tools" id="bottomTools"></div>
-    <div class="draw-actions"><button id="undoPoint">撤销点</button><button id="finishShape" class="active">完成</button><button id="cancelShape" class="danger">取消</button></div>
+    <div class="draw-actions"><button id="strokeMode" class="active">笔画直线</button><button id="undoPoint">撤销点</button><button id="finishShape" class="active">完成</button><button id="cancelShape" class="danger">取消</button></div>
   </div>
 </div>
 <script>
@@ -128,7 +128,7 @@ async function ensurePdfJs(){
 
 const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d'),wrap=document.getElementById('canvasWrap');
 const DPR=()=>Math.max(1,Math.min(2.5,window.devicePixelRatio||1));
-const state={bg:null,bgInfo:null,pdf:null,pdfBytes:null,pdfPage:1,pdfPages:0,pdfScale:2.5,view:{x:0,y:0,scale:1},tool:'pan',draft:[],roads:[],zones:[],services:[],selected:null,lastSave:0};
+const state={bg:null,bgInfo:null,pdf:null,pdfBytes:null,pdfPage:1,pdfPages:0,pdfScale:2.5,view:{x:0,y:0,scale:1},tool:'pan',draft:[],stroke:null,straightAssist:true,roads:[],zones:[],services:[],selected:null,lastSave:0};
 const colors={highway:'#fb7185',arterial:'#f97316',collector:'#facc15',street:'#94a3b8',rail:'#a78bfa',resLow:'#22c55e',resHigh:'#16a34a',commercial:'#38bdf8',industrial:'#eab308',office:'#60a5fa',mixed:'#f472b6',school:'#34d399',hospital:'#f87171',fire:'#fb923c',police:'#818cf8',park:'#4ade80'};
 const labels={pan:'移动地图',highway:'高速',arterial:'主干路',collector:'次干路',street:'街区路',rail:'轨道/货运',resLow:'低密住宅',resHigh:'高密住宅',commercial:'商业区',industrial:'工业区',office:'办公区',mixed:'混合区',school:'学校',hospital:'医院',fire:'消防',police:'警察',park:'公园',erase:'橡皮擦'};
 const tools=['pan','highway','arterial','collector','street','rail','resLow','resHigh','commercial','industrial','office','mixed','school','hospital','fire','police','park','erase'];
@@ -149,16 +149,33 @@ function drawRoad(rd){ctx.strokeStyle=colors[rd.type]||'#fff';ctx.lineCap='round
 function drawZone(z){ctx.fillStyle=hexA(colors[z.type]||'#fff',.25);ctx.strokeStyle=colors[z.type]||'#fff';ctx.lineWidth=2/state.view.scale;ctx.beginPath();z.points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.closePath();ctx.fill();ctx.stroke();if(el('showLabels')?.checked!==false)labelAt(centroid(z.points),labels[z.type])}
 function drawCover(s){ctx.fillStyle=hexA(colors[s.type]||'#fff',.10);ctx.strokeStyle=hexA(colors[s.type]||'#fff',.32);ctx.lineWidth=1.5/state.view.scale;ctx.beginPath();ctx.arc(s.x,s.y,s.r,0,Math.PI*2);ctx.fill();ctx.stroke()}
 function drawService(s){ctx.fillStyle=colors[s.type]||'#fff';ctx.strokeStyle='#020617';ctx.lineWidth=3/state.view.scale;ctx.beginPath();ctx.arc(s.x,s.y,10/state.view.scale+8,0,Math.PI*2);ctx.fill();ctx.stroke();if(el('showLabels')?.checked!==false)labelAt({x:s.x+14/state.view.scale,y:s.y},labels[s.type])}
-function drawDraft(){if(!state.draft.length)return;ctx.strokeStyle=colors[state.tool]||'#fff';ctx.fillStyle=hexA(colors[state.tool]||'#fff',.18);ctx.lineWidth=3/state.view.scale;ctx.setLineDash([8/state.view.scale,6/state.view.scale]);ctx.beginPath();state.draft.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));if(zoneTools.has(state.tool)&&state.draft.length>2){ctx.closePath();ctx.fill()}ctx.stroke();ctx.setLineDash([]);state.draft.forEach(p=>{ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,5/state.view.scale,0,Math.PI*2);ctx.fill()})}
+function drawDraft(){
+  const hasDraft=state.draft.length>0;
+  const strokePts=previewStrokePoints();
+  const hasStroke=strokePts.length>0;
+  if(!hasDraft&&!hasStroke)return;
+  ctx.strokeStyle=colors[state.tool]||'#fff';ctx.fillStyle=hexA(colors[state.tool]||'#fff',.18);ctx.lineWidth=3/state.view.scale;ctx.setLineDash([8/state.view.scale,6/state.view.scale]);
+  if(hasDraft){ctx.beginPath();state.draft.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));if(zoneTools.has(state.tool)&&state.draft.length>2){ctx.closePath();ctx.fill()}ctx.stroke();}
+  if(hasStroke){ctx.beginPath();strokePts.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));if(zoneTools.has(state.tool)&&strokePts.length>2){ctx.closePath();ctx.fill()}ctx.stroke();}
+  ctx.setLineDash([]);
+  [...state.draft,...strokePts].forEach(p=>{ctx.fillStyle='#fff';ctx.beginPath();ctx.arc(p.x,p.y,5/state.view.scale,0,Math.PI*2);ctx.fill()})
+} 
+function previewStrokePoints(){
+  if(!state.stroke||state.stroke.points.length<2)return [];
+  const pts=state.stroke.points;
+  if(lineTools.has(state.tool)&&state.straightAssist)return [pts[0],pts[pts.length-1]];
+  if(zoneTools.has(state.tool)&&state.straightAssist)return simplifyPoints(pts,18/state.view.scale).slice(0,60);
+  return pts;
+}
 function labelAt(p,t){ctx.save();ctx.font=`${12/state.view.scale}px system-ui`;const pad=4/state.view.scale,w=ctx.measureText(t).width+pad*2,h=18/state.view.scale;ctx.fillStyle='rgba(2,6,23,.72)';ctx.fillRect(p.x,p.y-h/2,w,h);ctx.fillStyle='#e5e7eb';ctx.fillText(t,p.x+pad,p.y+4/state.view.scale);ctx.restore()}
 function hexA(hex,a){let h=hex.replace('#','');if(h.length===3)h=h.split('').map(c=>c+c).join('');const n=parseInt(h,16);return`rgba(${n>>16&255},${n>>8&255},${n&255},${a})`}
 function centroid(pts){let x=0,y=0;pts.forEach(p=>{x+=p.x;y+=p.y});return{x:x/pts.length,y:y/pts.length}}
 function dist(a,b){return Math.hypot(a.x-b.x,a.y-b.y)}
-function setTool(t){state.tool=t;state.draft=[];document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));el('modeName').textContent=labels[t];el('modeHint').textContent=t==='pan'?'单指移动，双指缩放':t==='erase'?'点选对象删除':'Pencil/单指添加点，底部按钮完成';draw()}
+function setTool(t){state.tool=t;state.draft=[];state.stroke=null;document.querySelectorAll('[data-tool]').forEach(b=>b.classList.toggle('active',b.dataset.tool===t));el('modeName').textContent=labels[t];el('modeHint').textContent=t==='pan'?'单指移动，双指缩放':t==='erase'?'点选对象删除':lineTools.has(t)?'Pencil 直接拖画；开启直线辅助后自动拉直':'Pencil 拖画区域 / 点按加点';draw()}
 function makeTools(){const groups=[el('sideTools'),el('bottomTools')].filter(Boolean);groups.forEach(g=>{g.innerHTML='';tools.forEach(t=>{const b=document.createElement('button');b.textContent=labels[t];b.dataset.tool=t;b.onclick=()=>setTool(t);g.appendChild(b)})});setTool('pan');}
 makeTools();
 layerIds.forEach(id=>el(id)?.addEventListener('change',draw));
-el('finishShape').onclick=finishDraft;el('undoPoint').onclick=()=>{state.draft.pop();draw()};el('cancelShape').onclick=()=>{state.draft=[];draw()};
+el('finishShape').onclick=finishDraft;el('undoPoint').onclick=()=>{state.draft.pop();draw()};el('cancelShape').onclick=()=>{state.draft=[];state.stroke=null;draw()};el('strokeMode').onclick=()=>{state.straightAssist=!state.straightAssist;el('strokeMode').classList.toggle('active',state.straightAssist);el('strokeMode').textContent=state.straightAssist?'笔画直线':'自由笔画';toast(state.straightAssist?'直线辅助已开启':'自由笔画已开启')};
 function finishDraft(){if(lineTools.has(state.tool)&&state.draft.length>=2){state.roads.push({type:state.tool,points:[...state.draft]});state.draft=[];saveLocal();draw();toast('已完成道路')}else if(zoneTools.has(state.tool)&&state.draft.length>=3){state.zones.push({type:state.tool,points:[...state.draft]});state.draft=[];saveLocal();draw();toast('已完成分区')}else{toast('点数不够')}}
 function addWorldPoint(p){if(lineTools.has(state.tool)||zoneTools.has(state.tool)){state.draft.push(p);draw()}else if(serviceTools.has(state.tool)){state.services.push({type:state.tool,x:p.x,y:p.y,r:serviceRadius(state.tool)});saveLocal();draw();toast('已放置 '+labels[state.tool])}else if(state.tool==='erase'){eraseAt(p)}}
 function serviceRadius(t){return{school:260,hospital:360,fire:300,police:320,park:220}[t]||260}
@@ -166,10 +183,57 @@ function eraseAt(p){let best=null;state.services.forEach((s,i)=>{const d=dist(p,
 function segDist(p,a,b){const l2=(b.x-a.x)**2+(b.y-a.y)**2;if(!l2)return dist(p,a);let t=((p.x-a.x)*(b.x-a.x)+(p.y-a.y)*(b.y-a.y))/l2;t=Math.max(0,Math.min(1,t));return dist(p,{x:a.x+t*(b.x-a.x),y:a.y+t*(b.y-a.y)})}
 function pointInPoly(p,poly){let c=false;for(let i=0,j=poly.length-1;i<poly.length;j=i++){if(((poly[i].y>p.y)!=(poly[j].y>p.y))&&(p.x<(poly[j].x-poly[i].x)*(p.y-poly[i].y)/(poly[j].y-poly[i].y)+poly[i].x))c=!c}return c}
 const pointers=new Map();let lastTap=0, longTimer=null, panStart=null, pinchStart=null;
-canvas.addEventListener('pointerdown',e=>{canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,type:e.pointerType});clearTimeout(longTimer);if(pointers.size===1){panStart={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y};longTimer=setTimeout(()=>{if(state.tool!=='pan'){eraseAt(screenToWorld(e.clientX-wrap.getBoundingClientRect().left,e.clientY-wrap.getBoundingClientRect().top))}},650)}else if(pointers.size===2){pinchStart=pinchInfo();}}, {passive:false});
-canvas.addEventListener('pointermove',e=>{const p=pointers.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;clearTimeout(longTimer);if(pointers.size===2&&pinchStart){const now=pinchInfo();const rect=wrap.getBoundingClientRect();const cx=now.cx-rect.left,cy=now.cy-rect.top;const ratio=now.d/pinchStart.d;const newScale=Math.max(.05,Math.min(12,pinchStart.scale*ratio));state.view.scale=newScale;state.view.x=cx-pinchStart.world.x*newScale;state.view.y=cy-pinchStart.world.y*newScale;draw();return}if(pointers.size===1&&state.tool==='pan'&&panStart){state.view.x=panStart.vx+(e.clientX-panStart.x);state.view.y=panStart.vy+(e.clientY-panStart.y);draw();}}, {passive:false});
-canvas.addEventListener('pointerup',e=>{clearTimeout(longTimer);const p=pointers.get(e.pointerId);pointers.delete(e.pointerId);if(!p)return;const moved=Math.hypot(e.clientX-p.px,e.clientY-p.py);const rect=wrap.getBoundingClientRect();if(moved<10&&pointers.size===0){const now=Date.now();if(now-lastTap<320&&(lineTools.has(state.tool)||zoneTools.has(state.tool))){finishDraft()}else if(state.tool!=='pan'){addWorldPoint(screenToWorld(e.clientX-rect.left,e.clientY-rect.top))}lastTap=now}if(pointers.size<2)pinchStart=null;}, {passive:false});
-canvas.addEventListener('pointercancel',e=>{pointers.delete(e.pointerId);clearTimeout(longTimer)});
+function eventWorld(e){const rect=wrap.getBoundingClientRect();return screenToWorld(e.clientX-rect.left,e.clientY-rect.top)}
+function canStrokeDraw(){return lineTools.has(state.tool)||zoneTools.has(state.tool)}
+canvas.addEventListener('pointerdown',e=>{
+  e.preventDefault();canvas.setPointerCapture(e.pointerId);pointers.set(e.pointerId,{x:e.clientX,y:e.clientY,px:e.clientX,py:e.clientY,type:e.pointerType});clearTimeout(longTimer);
+  if(pointers.size===1){
+    panStart={x:e.clientX,y:e.clientY,vx:state.view.x,vy:state.view.y};
+    if(canStrokeDraw()&&state.tool!=='pan'){
+      state.stroke={id:e.pointerId,points:[eventWorld(e)],started:false,pointerType:e.pointerType};
+    }
+    longTimer=setTimeout(()=>{if(state.tool!=='pan'&&!state.stroke?.started){eraseAt(eventWorld(e))}},650)
+  }else if(pointers.size===2){state.stroke=null;pinchStart=pinchInfo();}
+}, {passive:false});
+canvas.addEventListener('pointermove',e=>{
+  e.preventDefault();const p=pointers.get(e.pointerId);if(!p)return;p.x=e.clientX;p.y=e.clientY;clearTimeout(longTimer);
+  if(pointers.size===2&&pinchStart){state.stroke=null;const now=pinchInfo();const rect=wrap.getBoundingClientRect();const cx=now.cx-rect.left,cy=now.cy-rect.top;const ratio=now.d/pinchStart.d;const newScale=Math.max(.05,Math.min(12,pinchStart.scale*ratio));state.view.scale=newScale;state.view.x=cx-pinchStart.world.x*newScale;state.view.y=cy-pinchStart.world.y*newScale;draw();return}
+  if(pointers.size===1&&state.tool==='pan'&&panStart){state.view.x=panStart.vx+(e.clientX-panStart.x);state.view.y=panStart.vy+(e.clientY-panStart.y);draw();return}
+  if(pointers.size===1&&state.stroke&&state.stroke.id===e.pointerId&&canStrokeDraw()){
+    const moved=Math.hypot(e.clientX-p.px,e.clientY-p.py);
+    if(moved>8)state.stroke.started=true;
+    const w=eventWorld(e);const pts=state.stroke.points;const last=pts[pts.length-1];
+    if(!last||dist(last,w)>4/state.view.scale){pts.push(w);draw()}
+  }
+}, {passive:false});
+canvas.addEventListener('pointerup',e=>{
+  e.preventDefault();clearTimeout(longTimer);const p=pointers.get(e.pointerId);pointers.delete(e.pointerId);if(!p)return;
+  const moved=Math.hypot(e.clientX-p.px,e.clientY-p.py);const rect=wrap.getBoundingClientRect();
+  if(state.stroke&&state.stroke.id===e.pointerId&&state.stroke.started&&moved>=10&&pointers.size===0){commitStroke();lastTap=0;if(pointers.size<2)pinchStart=null;return}
+  state.stroke=null;
+  if(moved<10&&pointers.size===0){const now=Date.now();if(now-lastTap<320&&(lineTools.has(state.tool)||zoneTools.has(state.tool))){finishDraft()}else if(state.tool!=='pan'){addWorldPoint(screenToWorld(e.clientX-rect.left,e.clientY-rect.top))}lastTap=now}
+  if(pointers.size<2)pinchStart=null;
+}, {passive:false});
+canvas.addEventListener('pointercancel',e=>{pointers.delete(e.pointerId);if(state.stroke&&state.stroke.id===e.pointerId)state.stroke=null;clearTimeout(longTimer);draw()});
+function commitStroke(){
+  const raw=state.stroke?.points||[];state.stroke=null;if(raw.length<2)return;
+  let pts;
+  if(lineTools.has(state.tool)){
+    pts=state.straightAssist?[raw[0],raw[raw.length-1]]:simplifyPoints(raw,8/state.view.scale).slice(0,120);
+    if(dist(pts[0],pts[pts.length-1])<8/state.view.scale){draw();return}
+    state.roads.push({type:state.tool,points:pts});saveLocal();draw();toast(state.straightAssist?'已添加直线路段':'已添加自由路段');
+  }else if(zoneTools.has(state.tool)){
+    pts=state.straightAssist?simplifyPoints(raw,20/state.view.scale).slice(0,80):simplifyPoints(raw,10/state.view.scale).slice(0,160);
+    if(pts.length>=3){state.zones.push({type:state.tool,points:pts});saveLocal();draw();toast(state.straightAssist?'已添加直边分区':'已添加手绘分区')}else{draw();toast('区域太小')}
+  }
+}
+function simplifyPoints(points,eps){
+  if(points.length<=2)return points.slice();
+  const sqEps=eps*eps;
+  function sqSegDist(p,a,b){let x=a.x,y=a.y,dx=b.x-x,dy=b.y-y;if(dx||dy){let t=((p.x-x)*dx+(p.y-y)*dy)/(dx*dx+dy*dy);if(t>1){x=b.x;y=b.y}else if(t>0){x+=dx*t;y+=dy*t}}dx=p.x-x;dy=p.y-y;return dx*dx+dy*dy}
+  function rdp(arr,first,last,out){let max=0,index=0;for(let i=first+1;i<last;i++){const d=sqSegDist(arr[i],arr[first],arr[last]);if(d>max){index=i;max=d}}if(max>sqEps){if(index-first>1)rdp(arr,first,index,out);out.push(arr[index]);if(last-index>1)rdp(arr,index,last,out)}}
+  const out=[points[0]];rdp(points,0,points.length-1,out);out.push(points[points.length-1]);return out;
+}
 canvas.addEventListener('wheel',e=>{e.preventDefault();zoomAt(e.offsetX,e.offsetY,state.view.scale*(e.deltaY>0?.9:1.1),true)},{passive:false});
 function pinchInfo(){const arr=[...pointers.values()];const a=arr[0],b=arr[1];const cx=(a.x+b.x)/2,cy=(a.y+b.y)/2;const rect=wrap.getBoundingClientRect();const sx=cx-rect.left,sy=cy-rect.top;return{d:Math.hypot(a.x-b.x,a.y-b.y),cx,cy,sx,sy,scale:state.view.scale,vx:state.view.x,vy:state.view.y,world:screenToWorld(sx,sy)}}
 function zoomAt(sx,sy,newScale,redraw=true){newScale=Math.max(.05,Math.min(12,newScale));const w=screenToWorld(sx,sy);state.view.scale=newScale;state.view.x=sx-w.x*newScale;state.view.y=sy-w.y*newScale;if(redraw)draw()}
@@ -267,10 +331,10 @@ el('nextPdf').onclick=async()=>{if(state.pdf&&state.pdfPage<state.pdfPages){stat
 el('goPdf').onclick=async()=>{if(!state.pdf)return;const n=Math.max(1,Math.min(state.pdfPages,parseInt(el('pdfPageInput').value||1)));state.pdfPage=n;el('pdfPageInput').value=n;await renderPdf()};
 el('rerenderPdf').onclick=renderPdf;
 function updateScore(){const scoreEl=el('score'),metrics=el('metrics'),sugg=el('suggestions'),legend=el('legend');if(!scoreEl)return;let score=100,w=[];const main=state.roads.filter(r=>['highway','arterial'].includes(r.type)).length;const zones=state.zones.length,services=state.services.length;if(main<2&&zones>2){score-=15;w.push('主干路/高速偏少，建议先搭骨架路网。')}if(state.zones.some(z=>z.type==='industrial')&&!state.roads.some(r=>r.type==='highway')){score-=18;w.push('工业区最好单独接高速或货运通道。')}if(state.zones.some(z=>z.type.includes('res'))&&!state.services.some(s=>s.type==='park')){score-=10;w.push('住宅区缺少公园覆盖。')}if(state.zones.some(z=>z.type==='resHigh')&&!state.services.some(s=>['fire','hospital'].includes(s.type))){score-=14;w.push('高密住宅建议优先补消防/医院。')}score=Math.max(0,score);scoreEl.textContent=state.bg?score:'--';scoreEl.className='score '+(score>=80?'good':score>=60?'mid':'bad');metrics.innerHTML=`<div class="metric"><span>道路/轨道</span><b>${state.roads.length}</b></div><div class="metric"><span>分区</span><b>${zones}</b></div><div class="metric"><span>服务设施</span><b>${services}</b></div><div class="metric"><span>草稿点</span><b>${state.draft.length}</b></div>`;sugg.innerHTML=w.length?w.map(x=>`<div class="warnbox">${x}</div>`).join(''):'<div class="okbox">当前规划结构比较健康，可以继续细化路网和公共服务。</div>';legend.innerHTML=Object.entries(labels).filter(([k])=>colors[k]).map(([k,v])=>`<span class="pill"><i class="dot" style="background:${colors[k]}"></i>${v}</span>`).join('')}
-function serializable(){return{version:'0.7-ipad-pdf-canvas-fix',bgInfo:state.bgInfo,view:state.view,roads:state.roads,zones:state.zones,services:state.services}}
+function serializable(){return{version:'0.9-pencil-straight-draw',bgInfo:state.bgInfo,view:state.view,roads:state.roads,zones:state.zones,services:state.services}}
 function saveLocal(){try{localStorage.setItem('cs2planner_v05_autosave',JSON.stringify(serializable()));}catch(e){}}
 setInterval(saveLocal,10000);
-el('saveProject').onclick=()=>{const blob=new Blob([JSON.stringify(serializable(),null,2)],{type:'application/json'});downloadBlob(blob,'cs2_planner_project_v07.json')};
+el('saveProject').onclick=()=>{const blob=new Blob([JSON.stringify(serializable(),null,2)],{type:'application/json'});downloadBlob(blob,'cs2_planner_project_v09.json')};
 el('exportPng').onclick=()=>{const a=document.createElement('a');a.download='cs2_planner_view.png';a.href=canvas.toDataURL('image/png');a.click()};
 el('projectFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);state.roads=d.roads||[];state.zones=d.zones||[];state.services=d.services||[];state.view=d.view||state.view;state.bgInfo=d.bgInfo||null;toast('工程已打开；如需底图请重新导入图片/PDF');draw()}catch(err){toast('工程文件无法读取')}};r.readAsText(f)};
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
