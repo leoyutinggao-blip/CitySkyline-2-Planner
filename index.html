@@ -6,7 +6,7 @@
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="theme-color" content="#0b1220" />
-  <title>CS2 城市规划器 v0.5 iPad + Pencil</title>
+  <title>CS2 城市规划器 v0.7 iPad + PDF Canvas Fix</title>
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
   <style>
     :root{
@@ -61,10 +61,10 @@
 <body>
 <div id="app">
   <header>
-    <h1>CS2 城市规划器 v0.5 iPad + Pencil</h1>
+    <h1>CS2 城市规划器 v0.7 iPad + Pencil</h1>
     <div class="top-actions">
       <label class="file-label" for="bgFile">导入图片</label><input id="bgFile" type="file" accept="image/png,image/jpeg,image/webp" />
-      <label class="file-label" for="pdfFile">导入 PDF</label><input id="pdfFile" type="file" accept="application/pdf,.pdf" />
+      <label class="file-label" for="pdfFile">导入 PDF</label><input id="pdfFile" type="file" accept=".pdf,application/pdf,*/*" />
       <label class="file-label" for="projectFile">打开工程</label><input id="projectFile" type="file" accept="application/json,.json" />
       <button id="saveProject">保存工程</button><button id="exportPng">导出 PNG</button>
     </div>
@@ -74,8 +74,8 @@
       <div class="section"><div class="section-title">导入 / PDF</div>
         <div class="row"><button id="prevPdf">上一页</button><button id="nextPdf">下一页</button></div>
         <div class="row"><span class="muted">页码</span><input id="pdfPageInput" type="number" min="1" value="1" style="width:74px"><button id="goPdf">跳转</button></div>
-        <div class="row"><select id="pdfQuality"><option value="2.5">流畅 2.5×</option><option value="3" selected>高清 3×</option><option value="4">超清 4×</option></select><button id="rerenderPdf">重渲染</button></div>
-        <small>iPad 建议 3×；4× 更清晰但更吃内存。只渲染当前页。</small>
+        <div class="row"><select id="pdfQuality"><option value="1.5">省内存 1.5×</option><option value="2">标准 2×</option><option value="2.5" selected>高清 2.5×</option><option value="3">超清 3×</option></select><button id="rerenderPdf">重渲染</button></div>
+        <small>iPad 建议 2.5×；这版不再把 PDF 转 dataURL，改为直接用 Canvas 当底图，更稳。</small>
       </div>
       <div class="section"><div class="section-title">工具</div><div id="sideTools" class="tool-grid"></div></div>
       <div class="section"><div class="section-title">图层</div>
@@ -105,10 +105,30 @@
   </div>
 </div>
 <script>
-if(window.pdfjsLib){pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';}
+
+async function loadScriptOnce(src){return new Promise((resolve,reject)=>{const old=[...document.scripts].find(x=>x.src===src);if(old){resolve();return}const sc=document.createElement('script');sc.src=src;sc.async=true;sc.onload=()=>resolve();sc.onerror=()=>reject(new Error('load failed: '+src));document.head.appendChild(sc);});}
+async function ensurePdfJs(){
+  if(window.pdfjsLib){
+    try{pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}catch(e){}
+    return window.pdfjsLib;
+  }
+  const urls=[
+    'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js',
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@3.11.174/build/pdf.min.js',
+    'https://unpkg.com/pdfjs-dist@3.11.174/build/pdf.min.js'
+  ];
+  let lastErr=null;
+  for(const u of urls){
+    try{await loadScriptOnce(u); if(window.pdfjsLib)break;}catch(e){lastErr=e;}
+  }
+  if(!window.pdfjsLib){throw lastErr||new Error('PDF.js 未加载');}
+  try{pdfjsLib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'}catch(e){}
+  return window.pdfjsLib;
+}
+
 const canvas=document.getElementById('canvas'),ctx=canvas.getContext('2d'),wrap=document.getElementById('canvasWrap');
 const DPR=()=>Math.max(1,Math.min(2.5,window.devicePixelRatio||1));
-const state={bg:null,bgInfo:null,pdf:null,pdfBytes:null,pdfPage:1,pdfPages:0,pdfScale:3,view:{x:0,y:0,scale:1},tool:'pan',draft:[],roads:[],zones:[],services:[],selected:null,lastSave:0};
+const state={bg:null,bgInfo:null,pdf:null,pdfBytes:null,pdfPage:1,pdfPages:0,pdfScale:2.5,view:{x:0,y:0,scale:1},tool:'pan',draft:[],roads:[],zones:[],services:[],selected:null,lastSave:0};
 const colors={highway:'#fb7185',arterial:'#f97316',collector:'#facc15',street:'#94a3b8',rail:'#a78bfa',resLow:'#22c55e',resHigh:'#16a34a',commercial:'#38bdf8',industrial:'#eab308',office:'#60a5fa',mixed:'#f472b6',school:'#34d399',hospital:'#f87171',fire:'#fb923c',police:'#818cf8',park:'#4ade80'};
 const labels={pan:'移动地图',highway:'高速',arterial:'主干路',collector:'次干路',street:'街区路',rail:'轨道/货运',resLow:'低密住宅',resHigh:'高密住宅',commercial:'商业区',industrial:'工业区',office:'办公区',mixed:'混合区',school:'学校',hospital:'医院',fire:'消防',police:'警察',park:'公园',erase:'橡皮擦'};
 const tools=['pan','highway','arterial','collector','street','rail','resLow','resHigh','commercial','industrial','office','mixed','school','hospital','fire','police','park','erase'];
@@ -155,17 +175,102 @@ function pinchInfo(){const arr=[...pointers.values()];const a=arr[0],b=arr[1];re
 function zoomAt(sx,sy,newScale,redraw=true){newScale=Math.max(.05,Math.min(12,newScale));const w=screenToWorld(sx,sy);state.view.scale=newScale;state.view.x=sx-w.x*newScale;state.view.y=sy-w.y*newScale;if(redraw)draw()}
 async function loadImageFile(file){const url=URL.createObjectURL(file);const img=new Image();img.onload=()=>{state.bg=img;state.bgInfo={type:'image',name:file.name};fitToBg();saveLocal();toast('图片已导入')};img.src=url}
 el('bgFile').onchange=e=>{const f=e.target.files[0];if(f)loadImageFile(f)};
-el('pdfFile').onchange=async e=>{const f=e.target.files[0];if(!f)return;state.pdfBytes=await f.arrayBuffer();state.pdf=await pdfjsLib.getDocument({data:state.pdfBytes}).promise;state.pdfPages=state.pdf.numPages;state.pdfPage=1;el('pdfPageInput').value=1;await renderPdf();};
-async function renderPdf(){if(!state.pdf)return toast('请先导入 PDF');state.pdfScale=parseFloat(el('pdfQuality')?.value||'3');const page=await state.pdf.getPage(state.pdfPage);const vp=page.getViewport({scale:state.pdfScale});const off=document.createElement('canvas');off.width=vp.width;off.height=vp.height;await page.render({canvasContext:off.getContext('2d'),viewport:vp}).promise;const img=new Image();img.onload=()=>{state.bg=img;state.bgInfo={type:'pdf',page:state.pdfPage,pages:state.pdfPages,scale:state.pdfScale};fitToBg();saveLocal();toast(`PDF 第 ${state.pdfPage}/${state.pdfPages} 页已渲染`)};img.src=off.toDataURL('image/png');}
+el('pdfFile').onchange=async e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  try{
+    toast('正在加载 PDF 引擎…');
+    const lib=await ensurePdfJs();
+    state.pdfBytes=await f.arrayBuffer();
+    const bytes=new Uint8Array(state.pdfBytes);
+    try{
+      state.pdf=await lib.getDocument({data:bytes}).promise;
+    }catch(workerErr){
+      // iPad / PWA 偶尔会拦截 PDF worker，失败后用无 worker 模式重试。
+      state.pdf=await lib.getDocument({data:new Uint8Array(state.pdfBytes),disableWorker:true}).promise;
+    }
+    state.pdfPages=state.pdf.numPages;
+    state.pdfPage=1;
+    el('pdfPageInput').value=1;
+    await renderPdf();
+  }catch(err){
+    console.error(err);
+    toast('PDF 导入失败：请确认用 Safari 打开且网络可访问 PDF.js CDN');
+  }finally{
+    e.target.value='';
+  }
+};
+async function renderPdf(){
+  if(!state.pdf)return toast('请先导入 PDF');
+  let page=null;
+  try{
+    const requestedScale=parseFloat(el('pdfQuality')?.value||'2.5');
+    page=await state.pdf.getPage(state.pdfPage);
+
+    // iPad/Safari 对超大 canvas 很敏感。这里自动限制像素量，避免渲染后转图片失败或页面被系统杀掉。
+    // 关键修复：不再 off.toDataURL() 再塞给 Image，而是直接把 PDF 渲染 canvas 作为底图。
+    const baseVp=page.getViewport({scale:1});
+    const maxPixels = /iPad|iPhone|Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints>1 ? 12000000 : 22000000;
+    let scale=requestedScale;
+    let pixels=baseVp.width*baseVp.height*scale*scale;
+    if(pixels>maxPixels){
+      scale=Math.sqrt(maxPixels/(baseVp.width*baseVp.height));
+      scale=Math.max(1,Math.floor(scale*10)/10);
+      toast(`PDF 页面较大，已自动降到 ${scale}× 渲染`);
+    }else{
+      toast(`正在渲染 PDF 第 ${state.pdfPage} 页，${scale}×…`);
+    }
+
+    const vp=page.getViewport({scale});
+    const off=document.createElement('canvas');
+    off.width=Math.max(1,Math.floor(vp.width));
+    off.height=Math.max(1,Math.floor(vp.height));
+    const ctx=off.getContext('2d',{alpha:false,willReadFrequently:false});
+    ctx.fillStyle='#ffffff';
+    ctx.fillRect(0,0,off.width,off.height);
+    await page.render({canvasContext:ctx,viewport:vp}).promise;
+
+    state.bg=off;
+    state.bgInfo={type:'pdf',page:state.pdfPage,pages:state.pdfPages,scale,requestedScale};
+    state.pdfScale=scale;
+    fitToBg();
+    saveLocal();
+    toast(`PDF 第 ${state.pdfPage}/${state.pdfPages} 页已导入，${scale}×`);
+  }catch(err){
+    console.error(err);
+    // 最后一层兜底：如果 2.5×/3× 失败，自动用 1.5× 再试一次。
+    try{
+      if(el('pdfQuality')) el('pdfQuality').value='1.5';
+      const page2=page || await state.pdf.getPage(state.pdfPage);
+      const vp2=page2.getViewport({scale:1.5});
+      const off2=document.createElement('canvas');
+      off2.width=Math.max(1,Math.floor(vp2.width));
+      off2.height=Math.max(1,Math.floor(vp2.height));
+      const ctx2=off2.getContext('2d',{alpha:false});
+      ctx2.fillStyle='#ffffff';
+      ctx2.fillRect(0,0,off2.width,off2.height);
+      await page2.render({canvasContext:ctx2,viewport:vp2}).promise;
+      state.bg=off2;
+      state.bgInfo={type:'pdf',page:state.pdfPage,pages:state.pdfPages,scale:1.5,autoFallback:true};
+      state.pdfScale=1.5;
+      fitToBg();
+      saveLocal();
+      toast('已用省内存 1.5× 成功导入 PDF');
+    }catch(err2){
+      console.error(err2);
+      toast('PDF 渲染失败：这个 PDF 可能过大或 Safari 内存不足，建议先用图片导入');
+    }
+  }
+}
 el('prevPdf').onclick=async()=>{if(state.pdf&&state.pdfPage>1){state.pdfPage--;el('pdfPageInput').value=state.pdfPage;await renderPdf()}};
 el('nextPdf').onclick=async()=>{if(state.pdf&&state.pdfPage<state.pdfPages){state.pdfPage++;el('pdfPageInput').value=state.pdfPage;await renderPdf()}};
 el('goPdf').onclick=async()=>{if(!state.pdf)return;const n=Math.max(1,Math.min(state.pdfPages,parseInt(el('pdfPageInput').value||1)));state.pdfPage=n;el('pdfPageInput').value=n;await renderPdf()};
 el('rerenderPdf').onclick=renderPdf;
 function updateScore(){const scoreEl=el('score'),metrics=el('metrics'),sugg=el('suggestions'),legend=el('legend');if(!scoreEl)return;let score=100,w=[];const main=state.roads.filter(r=>['highway','arterial'].includes(r.type)).length;const zones=state.zones.length,services=state.services.length;if(main<2&&zones>2){score-=15;w.push('主干路/高速偏少，建议先搭骨架路网。')}if(state.zones.some(z=>z.type==='industrial')&&!state.roads.some(r=>r.type==='highway')){score-=18;w.push('工业区最好单独接高速或货运通道。')}if(state.zones.some(z=>z.type.includes('res'))&&!state.services.some(s=>s.type==='park')){score-=10;w.push('住宅区缺少公园覆盖。')}if(state.zones.some(z=>z.type==='resHigh')&&!state.services.some(s=>['fire','hospital'].includes(s.type))){score-=14;w.push('高密住宅建议优先补消防/医院。')}score=Math.max(0,score);scoreEl.textContent=state.bg?score:'--';scoreEl.className='score '+(score>=80?'good':score>=60?'mid':'bad');metrics.innerHTML=`<div class="metric"><span>道路/轨道</span><b>${state.roads.length}</b></div><div class="metric"><span>分区</span><b>${zones}</b></div><div class="metric"><span>服务设施</span><b>${services}</b></div><div class="metric"><span>草稿点</span><b>${state.draft.length}</b></div>`;sugg.innerHTML=w.length?w.map(x=>`<div class="warnbox">${x}</div>`).join(''):'<div class="okbox">当前规划结构比较健康，可以继续细化路网和公共服务。</div>';legend.innerHTML=Object.entries(labels).filter(([k])=>colors[k]).map(([k,v])=>`<span class="pill"><i class="dot" style="background:${colors[k]}"></i>${v}</span>`).join('')}
-function serializable(){return{version:'0.5-ipad-pencil',bgInfo:state.bgInfo,view:state.view,roads:state.roads,zones:state.zones,services:state.services}}
+function serializable(){return{version:'0.7-ipad-pdf-canvas-fix',bgInfo:state.bgInfo,view:state.view,roads:state.roads,zones:state.zones,services:state.services}}
 function saveLocal(){try{localStorage.setItem('cs2planner_v05_autosave',JSON.stringify(serializable()));}catch(e){}}
 setInterval(saveLocal,10000);
-el('saveProject').onclick=()=>{const blob=new Blob([JSON.stringify(serializable(),null,2)],{type:'application/json'});downloadBlob(blob,'cs2_planner_project_v05.json')};
+el('saveProject').onclick=()=>{const blob=new Blob([JSON.stringify(serializable(),null,2)],{type:'application/json'});downloadBlob(blob,'cs2_planner_project_v07.json')};
 el('exportPng').onclick=()=>{const a=document.createElement('a');a.download='cs2_planner_view.png';a.href=canvas.toDataURL('image/png');a.click()};
 el('projectFile').onchange=e=>{const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const d=JSON.parse(r.result);state.roads=d.roads||[];state.zones=d.zones||[];state.services=d.services||[];state.view=d.view||state.view;state.bgInfo=d.bgInfo||null;toast('工程已打开；如需底图请重新导入图片/PDF');draw()}catch(err){toast('工程文件无法读取')}};r.readAsText(f)};
 function downloadBlob(blob,name){const a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=name;a.click();setTimeout(()=>URL.revokeObjectURL(a.href),1000)}
